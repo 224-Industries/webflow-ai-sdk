@@ -1,4 +1,6 @@
+import type { LanguageModel } from "ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { LeadResponseAgent } from "../src/agents/index.js";
 import {
   addCustomCode,
   listCustomCode,
@@ -7,7 +9,8 @@ import {
   listPages,
   listSites,
   publishSite,
-} from "../src/index.js";
+  updatePage,
+} from "../src/tools/index.js";
 
 const mockFetch = vi.fn();
 global.fetch = mockFetch;
@@ -45,6 +48,10 @@ describe("tool configuration", () => {
 
   it("addCustomCode requires approval", () => {
     expect(addCustomCode).toHaveProperty("needsApproval", true);
+  });
+
+  it("updatePage requires approval", () => {
+    expect(updatePage).toHaveProperty("needsApproval", true);
   });
 
   it("read-only tools do not require approval", () => {
@@ -90,6 +97,8 @@ describe("listSites", () => {
       lastUpdated: "2025-01-02T00:00:00Z",
       previewUrl: "https://preview.webflow.com/site-1",
       timeZone: "America/New_York",
+      designerUrl: "https://my-site.design.webflow.com",
+      settingsUrl: "https://webflow.com/dashboard/sites/my-site/general",
     });
     expect(result.sites[0].customDomains).toEqual([
       { id: "dom-1", url: "example.com" },
@@ -189,6 +198,10 @@ describe("listPages", () => {
           lastUpdated: "2025-01-02T00:00:00Z",
           publishedPath: "/home",
           seo: { title: "Home Page", description: "Welcome" },
+          openGraph: {
+            title: "OG Home",
+            description: "OG Welcome",
+          },
         },
       ],
       pagination: { limit: 100, offset: 0, total: 1 },
@@ -203,12 +216,15 @@ describe("listPages", () => {
       slug: "home",
       publishedPath: "/home",
     });
-    // false values become undefined due to truthy check in source
-    expect(result.pages[0].archived).toBeUndefined();
-    expect(result.pages[0].draft).toBeUndefined();
+    expect(result.pages[0].archived).toBe(false);
+    expect(result.pages[0].draft).toBe(false);
     expect(result.pages[0].seo).toEqual({
       title: "Home Page",
       description: "Welcome",
+    });
+    expect(result.pages[0].openGraph).toEqual({
+      title: "OG Home",
+      description: "OG Welcome",
     });
     expect(result.pagination).toEqual({ limit: 100, offset: 0, total: 1 });
     expect(result.error).toBeUndefined();
@@ -222,6 +238,76 @@ describe("listPages", () => {
     expect(result.pages).toEqual([]);
     expect(result.count).toBe(0);
     expect(result.error).toContain("404");
+  });
+});
+
+// ── updatePage ─────────────────────────────────────────────────────────────
+
+describe("updatePage", () => {
+  it("updates and returns mapped page data", async () => {
+    mockApiResponse({
+      id: "page-1",
+      title: "Updated Title",
+      slug: "updated-title",
+      archived: false,
+      draft: false,
+      createdOn: "2025-01-01T00:00:00Z",
+      lastUpdated: "2025-01-03T00:00:00Z",
+      publishedPath: "/updated-title",
+      seo: { title: "SEO Title", description: "SEO Desc" },
+      openGraph: { title: "OG Title", description: "OG Desc" },
+    });
+
+    const result = await execute(updatePage, {
+      pageId: "page-1",
+      title: "Updated Title",
+      slug: "updated-title",
+      seo: { title: "SEO Title", description: "SEO Desc" },
+      openGraph: { title: "OG Title", description: "OG Desc" },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.page).toMatchObject({
+      id: "page-1",
+      title: "Updated Title",
+      slug: "updated-title",
+      archived: false,
+      draft: false,
+      publishedPath: "/updated-title",
+    });
+    expect(result.page?.seo).toEqual({
+      title: "SEO Title",
+      description: "SEO Desc",
+    });
+    expect(result.page?.openGraph).toEqual({
+      title: "OG Title",
+      description: "OG Desc",
+    });
+    expect(result.error).toBeUndefined();
+
+    const fetchCall = mockFetch.mock.calls[0];
+    expect(fetchCall[0]).toContain("/pages/page-1");
+    expect(fetchCall[1].method).toBe("PUT");
+    const body = JSON.parse(fetchCall[1].body as string);
+    expect(body).toEqual({
+      title: "Updated Title",
+      slug: "updated-title",
+      seo: { title: "SEO Title", description: "SEO Desc" },
+      openGraph: { title: "OG Title", description: "OG Desc" },
+    });
+  });
+
+  it("returns structured error on failure", async () => {
+    mockApiResponse({ message: "Not Found" }, false, 404);
+
+    const result = await execute(updatePage, {
+      pageId: "bad-id",
+      title: "Nope",
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("404");
+    expect(result.page).toBeUndefined();
   });
 });
 
@@ -483,5 +569,53 @@ describe("addCustomCode", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("400");
+  });
+});
+
+// ── LeadResponseAgent ──────────────────────────────────────────────────────
+
+const mockModel = {
+  modelId: "mock",
+  provider: "mock",
+  specificationVersion: "v1",
+} as LanguageModel;
+
+describe("LeadResponseAgent", () => {
+  it("includes all expected tools", () => {
+    const agent = new LeadResponseAgent({ model: mockModel });
+    const toolNames = Object.keys(agent.tools);
+
+    expect(toolNames).toContain("listSites");
+    expect(toolNames).toContain("listForms");
+    expect(toolNames).toContain("listFormSubmissions");
+    expect(toolNames).toContain("sendEmail");
+    expect(toolNames).toContain("createContact");
+    expect(toolNames).toContain("listTemplates");
+    expect(toolNames).toContain("getTemplate");
+    expect(toolNames).toHaveLength(7);
+  });
+
+  it("has default instructions", () => {
+    const agent = new LeadResponseAgent({ model: mockModel });
+    const instructions = (agent as any).settings.instructions;
+
+    expect(typeof instructions).toBe("string");
+    expect(instructions.length).toBeGreaterThan(0);
+  });
+
+  it("allows custom instructions override", () => {
+    const agent = new LeadResponseAgent({
+      model: mockModel,
+      instructions: "Custom instructions",
+    });
+    const instructions = (agent as any).settings.instructions;
+
+    expect(instructions).toBe("Custom instructions");
+  });
+
+  it("has agent-v1 version", () => {
+    const agent = new LeadResponseAgent({ model: mockModel });
+
+    expect(agent.version).toBe("agent-v1");
   });
 });
