@@ -1,6 +1,6 @@
-# Contributing to Webflow - AI SDK Tools
+# Contributing to Webflow - AI SDK
 
-Thank you for your interest in contributing! We welcome contributions of all kinds, whether it's reporting bugs, suggesting features, improving documentation, or adding new tools.
+Thank you for your interest in contributing! We welcome contributions of all kinds, whether it's reporting bugs, suggesting features, improving documentation, or adding new tools and agents.
 
 By contributing, you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md) to ensure a welcoming and respectful community for all.
 

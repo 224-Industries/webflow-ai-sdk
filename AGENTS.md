@@ -4,11 +4,11 @@ Guidelines for AI coding agents working in this repository.
 
 ## Project Overview
 
-TypeScript library providing [AI SDK](https://ai-sdk.dev) tools for [Webflow](https://webflow.com) site management. Exports: `listSites`, `publishSite`, `listPages`, `listForms`, `listFormSubmissions`, `listCustomCode`, `addCustomCode`.
+TypeScript library providing [AI SDK](https://ai-sdk.dev) tools and agents for [Webflow](https://webflow.com) site management. Exports tools via `@224industries/webflow-ai-sdk/tools` and agents via `@224industries/webflow-ai-sdk/agents`.
 
 ## Commands
 
-**Package manager**: pnpm (v10.28.2)
+**Package manager**: pnpm (v10.29.3)
 
 ```bash
 pnpm install          # Install dependencies
@@ -95,6 +95,34 @@ export const myTool = tool({
 });
 ```
 
+### AI SDK Agent Pattern
+
+```typescript
+import type { LanguageModel, ToolLoopAgentSettings } from "ai";
+import { ToolLoopAgent } from "ai";
+
+const tools = { /* pre-configured tools */ };
+
+type AgentTools = typeof tools;
+
+interface MyAgentOptions
+  extends Omit<ToolLoopAgentSettings<never, AgentTools>, "tools" | "model"> {
+  model: LanguageModel;
+  instructions?: string;
+}
+
+export class MyAgent extends ToolLoopAgent<never, AgentTools> {
+  constructor({ model, instructions, ...rest }: MyAgentOptions) {
+    super({
+      ...rest,
+      model,
+      tools,
+      instructions: instructions ?? "Default system prompt.",
+    });
+  }
+}
+```
+
 ### Error Handling
 
 - Use try-catch in async functions
@@ -105,8 +133,16 @@ export const myTool = tool({
 ## Project Structure
 
 ```
-src/index.ts    # Main entry, exports all tools
-dist/           # Build output (ESM)
+src/
+  lib/
+    api.ts             # Webflow API client (callApi, getApiKey)
+    utils.ts           # Shared utilities (resolveSiteId, getStringField, etc.)
+    schemas.ts         # Zod output schemas for all tools
+  tools/
+    index.ts           # All tool definitions and exports
+  agents/
+    index.ts           # Agent configurations
+dist/                  # Build output (ESM)
 ```
 
 ## Key Linting Rules
@@ -139,8 +175,11 @@ Examples: `feat: add listForms tool`, `fix: handle missing site ID`
 
 - `ai` - Vercel AI SDK (peer)
 - `zod` - Schema validation (peer)
+- `resend-ai-sdk` - Resend AI SDK (peer, required for `LeadResponseAgent`)
 
 ## Environment
 
 - `WEBFLOW_API_KEY` - Required for Webflow API operations
 - `WEBFLOW_SITE_ID` - Default site ID (optional, avoids passing siteId to every tool)
+- `RESEND_API_KEY` - Required for Resend operations (used by `LeadResponseAgent`)
+- `RESEND_EMAIL_DOMAIN` - Verified sending domain for Resend (optional)

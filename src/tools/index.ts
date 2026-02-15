@@ -1,313 +1,23 @@
 import { tool } from "ai";
 import { z } from "zod";
-
-const BASE_URL = "https://api.webflow.com/v2";
-
-const getApiKey = () => {
-  const apiKey = process.env.WEBFLOW_API_KEY;
-  if (!apiKey) {
-    throw new Error("WEBFLOW_API_KEY environment variable is required");
-  }
-  return apiKey;
-};
-
-const callApi = async (
-  path: string,
-  options: {
-    method?: "GET" | "POST" | "PUT";
-    body?: Record<string, unknown>;
-    params?: Record<string, string | number | undefined>;
-  } = {}
-): Promise<Record<string, unknown>> => {
-  const { method = "GET", body, params } = options;
-
-  const url = new URL(`${BASE_URL}${path}`);
-  if (params) {
-    for (const [key, value] of Object.entries(params)) {
-      if (value !== undefined) {
-        url.searchParams.set(key, String(value));
-      }
-    }
-  }
-
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${getApiKey()}`,
-  };
-  if (body) {
-    headers["Content-Type"] = "application/json";
-  }
-
-  const response = await fetch(url.toString(), {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Webflow API error ${response.status}: ${text}`);
-  }
-
-  return response.json() as Promise<Record<string, unknown>>;
-};
-
-const getDefaultSiteId = () => process.env.WEBFLOW_SITE_ID ?? "";
-
-const resolveSiteId = (siteId?: string): string => {
-  const resolved = siteId || getDefaultSiteId();
-  if (!resolved) {
-    throw new Error(
-      "A site ID is required. Either pass a siteId or set the WEBFLOW_SITE_ID environment variable."
-    );
-  }
-  return resolved;
-};
-
-const getStringField = (
-  obj: Record<string, unknown>,
-  snakeCase: string,
-  camelCase: string
-): string | undefined => {
-  if (obj[snakeCase]) {
-    return String(obj[snakeCase]);
-  }
-  if (obj[camelCase]) {
-    return String(obj[camelCase]);
-  }
-  return undefined;
-};
-
-const parseFormFields = (
-  rawFields: Record<string, Record<string, unknown>> | undefined
-): Record<string, { displayName?: string; type?: string }> | undefined => {
-  if (!rawFields) {
-    return undefined;
-  }
-  const fields: Record<string, { displayName?: string; type?: string }> = {};
-  for (const [key, value] of Object.entries(rawFields)) {
-    fields[key] = {
-      displayName: value.displayName ? String(value.displayName) : undefined,
-      type: value.type ? String(value.type) : undefined,
-    };
-  }
-  return Object.keys(fields).length > 0 ? fields : undefined;
-};
-
-// ── Output Schemas ──────────────────────────────────────────────────────────
-
-const SiteInfoSchema = z.object({
-  id: z.string().describe("Unique identifier for the Site"),
-  displayName: z.string().describe("Name given to the Site"),
-  shortName: z.string().describe("Slugified version of the name"),
-  lastPublished: z
-    .string()
-    .optional()
-    .describe("ISO timestamp when the site was last published"),
-  lastUpdated: z
-    .string()
-    .optional()
-    .describe("ISO timestamp when the site was last updated"),
-  previewUrl: z.string().optional().describe("URL of the site preview image"),
-  timeZone: z.string().optional().describe("Site timezone"),
-  customDomains: z
-    .array(
-      z.object({
-        id: z.string().describe("Domain ID"),
-        url: z.string().describe("Registered domain name"),
-      })
-    )
-    .optional()
-    .describe("Custom domains attached to the site"),
-});
-
-const ListSitesResultSchema = z.object({
-  sites: z.array(SiteInfoSchema).describe("Array of site metadata"),
-  count: z.number().describe("Number of sites returned"),
-  error: z.string().optional().describe("Error message if failed"),
-});
-
-const PublishSiteResultSchema = z.object({
-  success: z.boolean().describe("Whether the publish was queued successfully"),
-  publishedDomains: z
-    .array(
-      z.object({
-        id: z.string().describe("Domain ID"),
-        url: z.string().describe("Domain URL"),
-      })
-    )
-    .optional()
-    .describe("Domains that were published to"),
-  error: z.string().optional().describe("Error message if failed"),
-});
-
-const PageInfoSchema = z.object({
-  id: z.string().describe("Unique identifier for the Page"),
-  title: z.string().describe("Title of the Page"),
-  slug: z.string().describe("URL slug of the Page"),
-  archived: z.boolean().optional().describe("Whether the Page is archived"),
-  draft: z.boolean().optional().describe("Whether the Page is a draft"),
-  createdOn: z
-    .string()
-    .optional()
-    .describe("ISO timestamp when the page was created"),
-  lastUpdated: z
-    .string()
-    .optional()
-    .describe("ISO timestamp when the page was last updated"),
-  publishedPath: z
-    .string()
-    .optional()
-    .describe("Relative path of the published page URL"),
-  seo: z
-    .object({
-      title: z.string().optional().describe("SEO title"),
-      description: z.string().optional().describe("SEO description"),
-    })
-    .optional()
-    .describe("SEO metadata for the page"),
-});
-
-const ListPagesResultSchema = z.object({
-  pages: z.array(PageInfoSchema).describe("Array of page metadata"),
-  count: z.number().describe("Number of pages returned"),
-  pagination: z
-    .object({
-      limit: z.number().describe("Limit used for pagination"),
-      offset: z.number().describe("Offset used for pagination"),
-      total: z.number().describe("Total number of records"),
-    })
-    .optional()
-    .describe("Pagination info"),
-  error: z.string().optional().describe("Error message if failed"),
-});
-
-const FormInfoSchema = z.object({
-  id: z.string().describe("Unique ID for the Form"),
-  displayName: z.string().describe("Form name displayed on the site"),
-  pageId: z.string().optional().describe("ID of the Page the form is on"),
-  pageName: z.string().optional().describe("Name of the Page the form is on"),
-  formElementId: z
-    .string()
-    .optional()
-    .describe(
-      "Unique element ID for the form, used to filter submissions across component instances"
-    ),
-  fields: z
-    .record(
-      z.string(),
-      z.object({
-        displayName: z.string().optional().describe("Field display name"),
-        type: z.string().optional().describe("Field type"),
-      })
-    )
-    .optional()
-    .describe("Form field definitions"),
-  createdOn: z
-    .string()
-    .optional()
-    .describe("ISO timestamp when the form was created"),
-  lastUpdated: z
-    .string()
-    .optional()
-    .describe("ISO timestamp when the form was last updated"),
-});
-
-const ListFormsResultSchema = z.object({
-  forms: z.array(FormInfoSchema).describe("Array of form metadata"),
-  count: z.number().describe("Number of forms returned"),
-  pagination: z
-    .object({
-      limit: z.number().describe("Limit used for pagination"),
-      offset: z.number().describe("Offset used for pagination"),
-      total: z.number().describe("Total number of records"),
-    })
-    .optional()
-    .describe("Pagination info"),
-  error: z.string().optional().describe("Error message if failed"),
-});
-
-const FormSubmissionSchema = z.object({
-  id: z.string().describe("Unique ID of the form submission"),
-  displayName: z.string().optional().describe("Form name"),
-  dateSubmitted: z
-    .string()
-    .optional()
-    .describe("ISO timestamp when the form was submitted"),
-  formResponse: z
-    .record(z.string(), z.unknown())
-    .optional()
-    .describe("Key/value pairs of submitted form data"),
-});
-
-const ListFormSubmissionsResultSchema = z.object({
-  formSubmissions: z
-    .array(FormSubmissionSchema)
-    .describe("Array of form submissions"),
-  count: z.number().describe("Number of submissions returned"),
-  pagination: z
-    .object({
-      limit: z.number().describe("Limit used for pagination"),
-      offset: z.number().describe("Offset used for pagination"),
-      total: z.number().describe("Total number of records"),
-    })
-    .optional()
-    .describe("Pagination info"),
-  error: z.string().optional().describe("Error message if failed"),
-});
-
-const CustomCodeBlockSchema = z.object({
-  siteId: z.string().describe("Site ID where the code is applied"),
-  pageId: z.string().optional().describe("Page ID if applied at page level"),
-  type: z.string().optional().describe("Whether applied at site or page level"),
-  scripts: z
-    .array(
-      z.object({
-        id: z.string().describe("Script ID"),
-        location: z.string().describe("header or footer"),
-        version: z.string().describe("SemVer version string"),
-      })
-    )
-    .describe("Scripts applied in this block"),
-  createdOn: z.string().optional().describe("ISO timestamp when created"),
-  lastUpdated: z
-    .string()
-    .optional()
-    .describe("ISO timestamp when last updated"),
-});
-
-const ListCustomCodeResultSchema = z.object({
-  blocks: z
-    .array(CustomCodeBlockSchema)
-    .describe("Array of custom code blocks applied to the site and its pages"),
-  count: z.number().describe("Number of blocks returned"),
-  pagination: z
-    .object({
-      limit: z.number().describe("Limit used for pagination"),
-      offset: z.number().describe("Offset used for pagination"),
-      total: z.number().describe("Total number of records"),
-    })
-    .optional()
-    .describe("Pagination info"),
-  error: z.string().optional().describe("Error message if failed"),
-});
-
-const AddCustomCodeResultSchema = z.object({
-  success: z
-    .boolean()
-    .describe("Whether the script was registered and applied"),
-  scriptId: z.string().describe("ID of the registered script"),
-  appliedTo: z
-    .string()
-    .optional()
-    .describe("Whether the script was applied to a site or page"),
-  error: z.string().optional().describe("Error message if failed"),
-});
-
-// ── Tools ───────────────────────────────────────────────────────────────────
-
-const siteIdDescription = getDefaultSiteId()
-  ? ` If not provided, defaults to the configured site: ${getDefaultSiteId()}.`
-  : "";
+import { callApi } from "../lib/api.js";
+import {
+  AddCustomCodeResultSchema,
+  ListCustomCodeResultSchema,
+  ListFormSubmissionsResultSchema,
+  ListFormsResultSchema,
+  ListPagesResultSchema,
+  ListSitesResultSchema,
+  PublishSiteResultSchema,
+  UpdatePageResultSchema,
+} from "../lib/schemas.js";
+import {
+  getStringField,
+  parseFormFields,
+  parseTitleDescription,
+  resolveSiteId,
+  siteIdDescription,
+} from "../lib/utils.js";
 
 export const listSites = tool({
   description:
@@ -370,7 +80,7 @@ export const publishSite = tool({
       .string()
       .optional()
       .describe(
-        `The ID of the site to publish.${siteIdDescription || " Use listSites to find available site IDs."}`
+        `The ID of the site to publish.${siteIdDescription || " Use listSites to find available site IDs. Do NOT guess or fabricate site IDs."}`
       ),
     customDomains: z
       .array(z.string())
@@ -451,7 +161,7 @@ export const listPages = tool({
       .string()
       .optional()
       .describe(
-        `The ID of the site.${siteIdDescription || " Use listSites to find available site IDs."}`
+        `The ID of the site.${siteIdDescription || " Use listSites to find available site IDs. Do NOT guess or fabricate site IDs."}`
       ),
     limit: z
       .number()
@@ -480,29 +190,25 @@ export const listPages = tool({
 
       const rawPages = (response.pages as Record<string, unknown>[]) ?? [];
 
-      const pages = rawPages.map((page) => {
-        const seo = page.seo as Record<string, unknown> | undefined;
-        return {
-          id: String(page.id ?? ""),
-          title: String(page.title ?? ""),
-          slug: String(page.slug ?? ""),
-          archived: page.archived ? Boolean(page.archived) : undefined,
-          draft: page.draft ? Boolean(page.draft) : undefined,
-          createdOn: getStringField(page, "created_on", "createdOn"),
-          lastUpdated: getStringField(page, "last_updated", "lastUpdated"),
-          publishedPath: page.publishedPath
-            ? String(page.publishedPath)
-            : undefined,
-          seo: seo
-            ? {
-                title: seo.title ? String(seo.title) : undefined,
-                description: seo.description
-                  ? String(seo.description)
-                  : undefined,
-              }
-            : undefined,
-        };
-      });
+      const pages = rawPages.map((page) => ({
+        id: String(page.id ?? ""),
+        title: String(page.title ?? ""),
+        slug: String(page.slug ?? ""),
+        archived:
+          typeof page.archived === "boolean" ? page.archived : undefined,
+        draft: typeof page.draft === "boolean" ? page.draft : undefined,
+        createdOn: getStringField(page, "created_on", "createdOn"),
+        lastUpdated: getStringField(page, "last_updated", "lastUpdated"),
+        publishedPath: page.publishedPath
+          ? String(page.publishedPath)
+          : undefined,
+        seo: parseTitleDescription(
+          page.seo as Record<string, unknown> | undefined
+        ),
+        openGraph: parseTitleDescription(
+          page.openGraph as Record<string, unknown> | undefined
+        ),
+      }));
 
       const pagination = response.pagination as
         | Record<string, unknown>
@@ -530,6 +236,118 @@ export const listPages = tool({
   },
 });
 
+export const updatePage = tool({
+  description:
+    "Update the settings of a Webflow page, including its title, slug, SEO metadata, and Open Graph metadata. " +
+    "Use this tool when the user wants to change a page's title, URL slug, SEO title/description, or social sharing metadata. " +
+    "Only the fields you provide will be updated; omitted fields remain unchanged. " +
+    "You must retrieve the page ID from listPages first — do NOT guess or fabricate page IDs.",
+  inputSchema: z.object({
+    pageId: z
+      .string()
+      .describe(
+        "The ID of the page to update. Use listPages to find available page IDs. Do NOT guess or fabricate page IDs."
+      ),
+    title: z.string().optional().describe("New title for the page."),
+    slug: z.string().optional().describe("New URL slug for the page."),
+    seo: z
+      .object({
+        title: z.string().optional().describe("SEO title for the page."),
+        description: z
+          .string()
+          .optional()
+          .describe("SEO meta description for the page."),
+      })
+      .optional()
+      .describe("SEO metadata to update."),
+    openGraph: z
+      .object({
+        title: z
+          .string()
+          .optional()
+          .describe("Open Graph title for social sharing."),
+        description: z
+          .string()
+          .optional()
+          .describe("Open Graph description for social sharing."),
+      })
+      .optional()
+      .describe("Open Graph metadata to update."),
+  }),
+  inputExamples: [
+    {
+      input: {
+        pageId: "63c720f9347c2139b248e552",
+        title: "About Us",
+        slug: "about-us",
+      },
+    },
+    {
+      input: {
+        pageId: "63c720f9347c2139b248e552",
+        seo: { title: "About Our Company", description: "Learn more about us" },
+        openGraph: { title: "About Us", description: "Our story" },
+      },
+    },
+  ],
+  outputSchema: UpdatePageResultSchema,
+  strict: true,
+  needsApproval: true,
+  execute: async ({ pageId, title, slug, seo, openGraph }) => {
+    try {
+      const body: Record<string, unknown> = {};
+      if (title !== undefined) {
+        body.title = title;
+      }
+      if (slug !== undefined) {
+        body.slug = slug;
+      }
+      if (seo !== undefined) {
+        body.seo = seo;
+      }
+      if (openGraph !== undefined) {
+        body.openGraph = openGraph;
+      }
+
+      const response = await callApi(`/pages/${pageId}`, {
+        method: "PUT",
+        body,
+      });
+
+      const page = response as Record<string, unknown>;
+
+      return {
+        success: true,
+        page: {
+          id: String(page.id ?? ""),
+          title: String(page.title ?? ""),
+          slug: String(page.slug ?? ""),
+          archived:
+            typeof page.archived === "boolean" ? page.archived : undefined,
+          draft: typeof page.draft === "boolean" ? page.draft : undefined,
+          createdOn: getStringField(page, "created_on", "createdOn"),
+          lastUpdated: getStringField(page, "last_updated", "lastUpdated"),
+          publishedPath: page.publishedPath
+            ? String(page.publishedPath)
+            : undefined,
+          seo: parseTitleDescription(
+            page.seo as Record<string, unknown> | undefined
+          ),
+          openGraph: parseTitleDescription(
+            page.openGraph as Record<string, unknown> | undefined
+          ),
+        },
+      };
+    } catch (error) {
+      console.error("Error updating page:", error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Failed to update page",
+      };
+    }
+  },
+});
+
 export const listForms = tool({
   description:
     "List all forms for a Webflow site. " +
@@ -542,7 +360,7 @@ export const listForms = tool({
       .string()
       .optional()
       .describe(
-        `The ID of the site.${siteIdDescription || " Use listSites to find available site IDs."}`
+        `The ID of the site.${siteIdDescription || " Use listSites to find available site IDs. Do NOT guess or fabricate site IDs."}`
       ),
     limit: z
       .number()
@@ -623,13 +441,13 @@ export const listFormSubmissions = tool({
       .string()
       .optional()
       .describe(
-        `The ID of the site.${siteIdDescription || " Use listSites to find available site IDs."}`
+        `The ID of the site.${siteIdDescription || " Use listSites to find available site IDs. Do NOT guess or fabricate site IDs."}`
       ),
     elementId: z
       .string()
       .optional()
       .describe(
-        "Filter submissions to a specific form by its element ID. Get this from listForms (formElementId field)."
+        "Filter submissions to a specific form by its element ID. Get this from the listForms tool (formElementId field). Do NOT guess or fabricate element IDs."
       ),
     limit: z
       .number()
@@ -722,7 +540,7 @@ export const listCustomCode = tool({
       .string()
       .optional()
       .describe(
-        `The ID of the site.${siteIdDescription || " Use listSites to find available site IDs."}`
+        `The ID of the site.${siteIdDescription || " Use listSites to find available site IDs. Do NOT guess or fabricate site IDs."}`
       ),
     limit: z
       .number()
@@ -812,7 +630,7 @@ export const addCustomCode = tool({
       .string()
       .optional()
       .describe(
-        `The ID of the site to register the script on.${siteIdDescription || " Use listSites to find available site IDs."}`
+        `The ID of the site to register the script on.${siteIdDescription || " Use listSites to find available site IDs. Do NOT guess or fabricate site IDs."}`
       ),
     target: z
       .enum(["site", "page"])
@@ -823,7 +641,7 @@ export const addCustomCode = tool({
       .string()
       .optional()
       .describe(
-        'The ID of the page to apply the script to. Required when target is "page". Use listPages to find page IDs.'
+        'The ID of the page to apply the script to. Required when target is "page". Use listPages to find page IDs. Do NOT guess or fabricate page IDs.'
       ),
     sourceCode: z
       .string()
